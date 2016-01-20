@@ -34,6 +34,8 @@ static const char* kEVCollectionViewReloadDataKey = "kEVCollectionViewReloadData
 
 #define EV_UNDO_TUTORIAL @"Drag the microphone button to the left to undo the last utterance."
 
+#define EV_THINKING_TEXT @"Thinking..."
+
 typedef void (*R_IMP)(void*, SEL);
 R_IMP oldReloadData;
 
@@ -85,6 +87,7 @@ void reloadData(id collectionView, SEL selector) {
 
 - (void)showMyMessageForResponse:(EVResponse*)response hasWarnings:(BOOL*)hasWarnings;
 - (void)showWarningMessage:(NSString*)message;
+- (void)showEvaMessage:(EVStyledString*)message withSpeakText:(NSString*)speakText updateLast:(BOOL)updateLast andMessageId:(NSString*)messageId;
 - (void)speakText:(NSString*)text;
 - (void)stopSpeaking;
 
@@ -449,6 +452,27 @@ void reloadData(id collectionView, SEL selector) {
     [self finishSendingMessageAnimated:YES];
 }
 
+- (void)showEvaMessage:(EVStyledString*)message withSpeakText:(NSString*)speakText updateLast:(BOOL)updateLast andMessageId:(NSString*)messageId {
+    if (updateLast) {
+        NSInteger index = [self.evApplication.sessionMessages count];
+        while (--index > 0 && [self isMyMessageInRow:index]) {;}
+        if (index > 0) {
+            [self.evApplication.sessionMessages removeObjectAtIndex:index];
+        }
+    }
+    
+    EVChatMessage* chatItem = [EVChatMessage serverMessageWithID:messageId text:message];
+    [self.evApplication.sessionMessages addObject:chatItem];
+    [self finishReceivingMessageAnimated:YES];
+    if (speakText != nil) {
+        [self speakText:speakText];
+    }
+}
+
+- (void)showThinkingMessage {
+    [self showWarningMessage:EV_THINKING_TEXT];
+}
+
 - (void)speakText:(NSString *)text {
     if (self.speakEnabled && !isRecording) {
         AVSpeechUtterance* utterance = [AVSpeechUtterance speechUtteranceWithString:text];
@@ -559,6 +583,7 @@ void reloadData(id collectionView, SEL selector) {
 
 
 - (void)handleCallbackResponse:(EVCallbackResponse*)response withElement:(EVFlowElement*)element forChatMessage:(EVChatMessage*)message {
+    NSString* sayString = element.sayIt;
     switch ([response responseType]) {
         case EVCallbackResponseTypePromise: {
             [element retain];
@@ -578,21 +603,19 @@ void reloadData(id collectionView, SEL selector) {
         case EVCallbackResponseTypeBool:
         case EVCallbackResponseTypeNone: {
             if ([response boolValue]) {
-                NSString* sayIt = [element sayIt];
-                if (sayIt != nil && ![sayIt isEqualToString:@""]) {
-                    [self speakText:sayIt];
-                }
+                [self showEvaMessage:[EVStyledString styledStringWithString:sayString] withSpeakText:sayString updateLast:YES andMessageId:<#(NSString *)#>]
             } else {
                 
             }
             break;
         }
-        case EVCallbackResponseTypeString: {
-            break;
-        }
         case EVCallbackResponseTypeData: {
             break;
         }
+        case EVCallbackResponseTypeString: {
+            break;
+        }
+        
         case EVCallbackResponseTypeCloseChatAction: {
             [self hideChatView:self];
         }

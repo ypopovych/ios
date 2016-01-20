@@ -22,7 +22,7 @@ typedef NS_ENUM(int16_t, EVCallbackResponseType) {
 
 @interface EVCallbackResponseData : NSObject
 
-@property (nonatomic, strong) EVStyledString* sayIt;
+@property (nonatomic, strong) NSString* sayIt;
 @property (nonatomic, strong) EVStyledString* displayIt;
 @property (nonatomic, assign) NSInteger resultsCount;
 @property (nonatomic, assign) BOOL appendToEvaSayIt;
