@@ -17,7 +17,10 @@
 
 #define EV_NEW_SESSION_ID @"1"
 #define EV_DEFAULT_MAX_RECORDING_TIME 15.0f
-#define EV_KIT_VERSION @"2.0.0"
+
+#define EV_KIT_VERSION @"2.0.31"
+
+// [[NSBundle bundleForClass:[EVApplication class]] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]
 
 typedef NS_ENUM(char, EVApplicationStateSound) {
     EVApplicationStateSoundRecordingStarted = 0,
@@ -34,6 +37,7 @@ typedef NS_ENUM(char, EVApplicationStateSound) {
 @property (nonatomic, assign, readwrite) id<EVApplicationDelegate> delegate;
 
 @property (nonatomic, assign, readonly) BOOL isReady;
+@property (nonatomic, assign, readonly) BOOL isControllerShown;
 
 @property (nonatomic, assign, readwrite) BOOL highlightText;
 @property (nonatomic, assign, readwrite) BOOL useLocationServices;
@@ -59,6 +63,8 @@ typedef NS_ENUM(char, EVApplicationStateSound) {
 
 @property (nonatomic, strong, readonly) NSDictionary* applicationSounds;
 
+
+
 // View Classes. Can be changed //
 @property (nonatomic, assign, readwrite) Class chatViewControllerClass;
 @property (nonatomic, assign, readwrite) Class chatButtonClass;
@@ -74,6 +80,9 @@ typedef NS_ENUM(char, EVApplicationStateSound) {
 
 // Set API key and Site Code for application
 - (void)setAPIKey:(NSString*)apiKey andSiteCode:(NSString*)siteCode;
+
+// tell Eva what is currently being viewee in the app
+- (void)setCurrentPage:(EVCRMPageType)currentPage andSubPage:(NSString*)subPage andFilter:(EVCRMFilterType)filter;
 
 // Start record from current active Audio, If 'withNewSession' is set to 'NO' the function keeps last session. //
 - (void)startRecordingWithNewSession:(BOOL)withNewSession;

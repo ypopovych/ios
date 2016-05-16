@@ -20,12 +20,14 @@ typedef NS_ENUM(int16_t, EVFlowElementType) {
     EVFlowElementTypeExplore,
     
     EVFlowElementTypeNavigate,
+    EVFlowElementTypePhoneAction,
     EVFlowElementTypeQuestion,
     EVFlowElementTypeAnswer,
     EVFlowElementTypeStatement,
     EVFlowElementTypeService,
     EVFlowElementTypeReply,
-    EVFlowElementTypeData
+    EVFlowElementTypeData,
+    EVFlowElementTypeCreate
 };
 
 @interface EVFlowElement : NSObject

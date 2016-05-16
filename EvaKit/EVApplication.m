@@ -15,7 +15,9 @@
 #import "EVAudioRecorder.h"
 #import "EVAudioConvertionOperation.h"
 #import "EVAudioDataStreamer.h"
+#import "EVAudioAutoStopper.h"
 #import "EVLocationManager.h"
+#import "EVApplicationSoundDelegate.h"
 #import "NSTimeZone+EVA.h"
 
 
@@ -23,18 +25,20 @@
 #define EV_HOST_ADDRESS_FOR_TEXT  EV_HOST_ADDRESS
 #define EV_API_VERSION @"v1.0"
 
-@interface EVApplication () <EVAudioRecorderDelegate, EVAudioDataStreamerDelegate, EVLocationManagerDelegate, EVAPIRequestDelegate>
+@interface EVApplication () <EVAudioRecorderDelegate, EVAutoStopperDelegate, EVAudioDataStreamerDelegate, EVLocationManagerDelegate, EVAPIRequestDelegate, EVApplicationSoundDelegate, EVErrorHandler>
 
 @property (nonatomic, strong, readwrite) NSString* APIKey;
 @property (nonatomic, strong, readwrite) NSString* siteCode;
 @property (nonatomic, strong, readwrite) NSString* apiVersion;
 
 @property (nonatomic, assign, readwrite) BOOL isReady;
+@property (nonatomic, assign, readwrite) BOOL isControllerShown;
 
 @property (nonatomic, strong, readwrite) NSMutableDictionary* chatViewControllerPathRewrites;
 @property (nonatomic, strong, readwrite) EVLocationManager *locationManager;
 
 @property (nonatomic, strong, readwrite) EVAudioRecorder* soundRecorder;
+@property (nonatomic, strong, readwrite) EVAudioAutoStopper* autoStopper;
 @property (nonatomic, strong, readwrite) EVAudioConvertionOperation* flacConverter;
 @property (nonatomic, strong, readwrite) EVAudioDataStreamer* dataStreamer;
 
@@ -45,7 +49,13 @@
 
 @property (nonatomic, strong, readwrite) NSMutableArray* sessionMessages;
 
-- (void)setAVSession;
+@property (nonatomic, assign, readwrite) EVCRMPageType currentPage;
+@property (nonatomic, strong, readwrite) NSString *currentSubPage;
+@property (nonatomic, assign, readwrite) EVCRMFilterType subPageFilter;
+
+@property (nonatomic, assign, readwrite) BOOL autoStop;
+
+
 - (void)setupRecorderChain;
 - (void)updateURL;
 - (NSString*)getURLStringWithServer:(NSString*)server;
@@ -102,8 +112,25 @@
     return sharedInstance;
 }
 
+- (void)node:(EVDataNode*)node gotAnError:(NSError *)error {
+    EV_LOG_ERROR(@"Node %@ got an Error: %@", node.name, error);
+    [[self currentApiRequest] cancel];
+    self.currentApiRequest = nil;
+    [[self soundRecorder] cancel];
+    [error retain];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [error autorelease];
+        [[self soundForState:EVApplicationStateSoundRequestError] play];
+        [self.delegate evApplication:self didObtainError:error];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            self.isReady = YES;
+        });
+    });
+}
+
+
 - (void)setupRecorderChain {
-    self.soundRecorder = [[EVAudioRecorder new] autorelease];
+    self.soundRecorder = [[[EVAudioRecorder alloc] initWithErrorHandler:self] autorelease];
     self.soundRecorder.delegate = self;
     
     self.soundRecorder.audioFormat = kAudioFormatLinearPCM;
@@ -112,23 +139,33 @@
     self.soundRecorder.audioNumberOfChannels = 1;
     self.soundRecorder.audioBitsPerSample = 16;
     
-    self.soundRecorder.levelSampleTime = 0.03; // how often check silence moments
-    self.soundRecorder.minNoiseTime = 0.10;  // must have noise for at least this much time to start considering silence
-    self.soundRecorder.preRecordingTime = 0.12; // will start listening to noise/silence only after this time
-    self.soundRecorder.silentStopRecordTime = 0.7; // time of silence for record stop
-
     
-    self.flacConverter = [[EVAudioConvertionOperation new] autorelease];
+    self.autoStopper = [[[EVAudioAutoStopper alloc] initWithDelegate:self] autorelease];
+    self.autoStopper.errorHandler = self;
+    self.autoStopper.minNoiseTime = 0.2;  // must have noise for at least this much time to start considering silence
+    self.autoStopper.preRecordingTime = 0.15; // will start listening to noise/silence only after this time
+    //    self.autoStopper.silentStopRecordTime = 0.3; // time of silence for record stop
+    self.autoStopper.silentPeriodValueAtT0 = 0.7;
+    self.autoStopper.silentPeriodValueAtT1 = 0.07;
+    self.autoStopper.timeT0 = 0.4;
+    self.autoStopper.timeT1 = 1.2;
+    self.autoStopper.vadMode = 3; // aggressive mode 0..3   - 3 is the highest chance to detect silence
+    self.autoStopper.maxRecordingTime = self.maxRecordingTime;
+    self.autoStopper.levelSampleTime = 0.03; // how oft to visualize the sound
+    
+    self.flacConverter = [[[EVAudioConvertionOperation alloc] initWithErrorHandler:self] autorelease];
     self.flacConverter.sampleRate = 16000;
     self.flacConverter.bitsPerSample = 16;
     self.flacConverter.numberOfChannels = 1;
+    self.flacConverter.maxRecordingTime = self.maxRecordingTime;
     
-    self.dataStreamer = [[[EVAudioDataStreamer alloc] initWithOperationChainLength:10] autorelease];
+    self.dataStreamer = [[[EVAudioDataStreamer alloc] initWithOperationChainLength:10 andErrorHandler:self] autorelease];
     self.dataStreamer.sampleRate = 16000;
     self.dataStreamer.delegate = self;
     
-    self.soundRecorder.dataProviderDelegate = self.flacConverter;
-    self.flacConverter.dataProviderDelegate = self.dataStreamer;
+    self.soundRecorder.dataConsumer = self.autoStopper;
+    self.autoStopper.dataConsumer = self.flacConverter;
+    self.flacConverter.dataConsumer = self.dataStreamer;
 }
 
 - (instancetype)init {
@@ -149,6 +186,9 @@
         self.textServerHost = EV_HOST_ADDRESS_FOR_TEXT;
         self.apiVersion = EV_API_VERSION;
         self.scope = [EVSearchScope scopeWithContextTypes:EVSearchContextTypesAll];
+        self.currentPage = EVCRMPageTypeOther;
+        self.currentSubPage = nil;
+        self.subPageFilter = EVCRMFilterTypeNone;
         
         self.sendVolumeLevelUpdates = YES;
         self.isReady = NO;
@@ -175,7 +215,7 @@
         
         [self setupRecorderChain];
         
-        [self setAVSession];
+        EV_LOG_INFO(@"Voice Kit version %@ initialized", EV_KIT_VERSION);
     }
     return self;
 }
@@ -199,7 +239,15 @@
     self.flacConverter = nil;
     self.dataStreamer = nil;
     self.currentApiRequest = nil;
+    self.currentSubPage = nil;
     [super dealloc];
+}
+
+
+- (void)setCurrentPage:(EVCRMPageType)currentPage andSubPage:(NSString*)subPage andFilter:(EVCRMFilterType)filter {
+    self.currentPage = currentPage;
+    self.subPageFilter = filter;
+    self.currentSubPage = subPage;
 }
 
 - (EVVoiceChatButton*)addButtonInController:(UIViewController*)viewController {
@@ -228,6 +276,7 @@
 }
 
 - (void)showChatViewController:(UIResponder*)sender withViewSettings:(NSDictionary*)viewSettings {
+    self.isControllerShown = YES;
     UIViewController *ctrl = nil;
     id delegate = nil;
     if ([sender isKindOfClass:[UIViewController class]]) {
@@ -260,7 +309,7 @@
     viewCtrl.evApplication = self;
     self.delegate = viewCtrl;
     viewCtrl.delegate = delegate;
-   
+    
     [viewCtrl updateViewFromSettings:viewSettings];
     [ctrl presentViewController:viewCtrl animated:YES completion:^{
         if (self.useLocationServices) {
@@ -270,6 +319,9 @@
 }
 
 - (void)hideChatViewController:(UIResponder*)sender {
+    self.isControllerShown = NO;
+    self.delegate = nil;
+    self.isReady = YES;
     if (self.soundRecorder.isRecording) {
         [self cancelRecording];
     }
@@ -313,11 +365,22 @@
     if (self.context != nil) {
         [urlStr appendFormat:@"&context=%@", [self.context requestParameterValue]];
     }
+    if (self.currentPage != EVCRMPageTypeOther) {
+        [urlStr appendFormat:@"&page=crm/%@/", [EVCRMAttributes pageTypeToString:self.currentPage]];
+        
+        if (self.currentSubPage != nil) {
+            [urlStr appendString: self.currentSubPage];
+        }
+        [urlStr appendString:@"/"];
+        if (self.subPageFilter != EVCRMFilterTypeNone) {
+            [urlStr appendString:[EVCRMAttributes filterTypeToString:self.subPageFilter]];
+        }
+    }
     [urlStr appendFormat:@"&audio_files_used=%@%@%@%@",
-                         [self soundForState:EVApplicationStateSoundRecordingStarted] == nil ? @"N": @"Y",
-                         [self soundForState:EVApplicationStateSoundRequestFinished] == nil ? @"N" : @"Y",
-                         [self soundForState:EVApplicationStateSoundRecordingStoped] == nil ? @"N" : @"Y",
-                         [self soundForState:EVApplicationStateSoundCancelled] == nil ? @"N" : @"Y"];
+     [self soundForState:EVApplicationStateSoundRecordingStarted] == nil ? @"N": @"Y",
+     [self soundForState:EVApplicationStateSoundRequestFinished] == nil ? @"N" : @"Y",
+     [self soundForState:EVApplicationStateSoundRecordingStoped] == nil ? @"N" : @"Y",
+     [self soundForState:EVApplicationStateSoundCancelled] == nil ? @"N" : @"Y"];
     
     for (NSString* param in [self.extraParameters allKeys]) {
         id val = [self.extraParameters objectForKey:param];
@@ -349,6 +412,7 @@
         self.isReady = YES;
     } else {
         self.isReady = NO;
+        EV_LOG_ERROR(@"Need to setup API_KEY and SITE_CODE");
     }
     [self updateURL];
 }
@@ -402,11 +466,24 @@
 
 - (void)setSound:(EVApplicationSound*)sound forApplicationState:(EVApplicationStateSound)state {
     NSMutableDictionary* dict = (NSMutableDictionary*)self.applicationSounds;
+    
+    if (state == EVApplicationStateSoundRecordingStarted && [self soundForState:state]) {
+        [self soundForState:state].delegate = nil;
+    }
+    
     if (sound == nil) {
         [dict removeObjectForKey:@(state)];
     } else {
         [dict setObject:sound forKey:@(state)];
+        if (state == EVApplicationStateSoundRecordingStarted) {
+            sound.delegate = self;
+        }
     }
+}
+
+-(void)didFinishPlay:(EVApplicationSound*)sound {
+    EV_LOG_INFO(@"Did finish play");
+    [self.soundRecorder startRecordingWithAutoStop:self.autoStop];
 }
 
 // Start record from current active Audio, If 'withNewSession' is set to 'FALSE' the function keeps last session. //
@@ -419,22 +496,62 @@
         EV_LOG_ERROR(@"EVApplication is not ready!");
         return;
     }
+    if (!self.isControllerShown) {
+        EV_LOG_INFO(@"Can't start recording when chat controller is hidden");
+    }
     if (withNewSession) {
         self.currentSessionID = EV_NEW_SESSION_ID;
     }
     self.isReady = NO;
-    [self.soundRecorder startRecording:self.maxRecordingTime withAutoStop:autoStop];
+    self.autoStop = autoStop;
+    
+    if ([self soundForState:EVApplicationStateSoundRecordingStarted] != nil) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [[self soundForState:EVApplicationStateSoundRecordingStarted] play];
+            // startRecording will be triggered by the didFinishPlay
+            //[self.soundRecorder startRecording:self.maxRecordingTime withAutoStop:self.autoStop];
+        });
+    }
+    else {
+        [self didFinishPlay:nil];
+    }
 }
 
 // Stop record, Would send the record to Eva for analyze //
 - (void)stopRecording {
     [self.soundRecorder stopRecording];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[self soundForState:EVApplicationStateSoundRecordingStoped] play];
+        if ([self.delegate respondsToSelector:@selector(evApplicationRecordingIsStoped:)]) {
+            [self.delegate evApplicationRecordingIsStoped:self];
+        }
+    });
 }
+
+- (void)stopperTimeStopEvent:(EVAudioAutoStopper*)stopper {
+    [self stopRecording];
+}
+- (void)stopperSilenceStopEvent:(EVAudioAutoStopper*)stopper   stoppedAtFrame:(int)frame {
+    if (_autoStop) {
+        [self stopRecording];
+    }
+}
+
+
 
 // Cancel record, Would cancel operation, record won't send to Eva (don't expect response) //
 - (void)cancelRecording {
     [self.currentApiRequest cancel];
-    [self.soundRecorder cancelRecording];
+    [self.soundRecorder cancel];
+    
+    [[self soundForState:EVApplicationStateSoundCancelled] play];
+    if ([self.delegate respondsToSelector:@selector(evApplicationRecordingIsCancelled:)]) {
+        [self.delegate evApplicationRecordingIsCancelled:self];
+    }
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.isReady = YES;
+    });
+    
 }
 
 
@@ -442,7 +559,7 @@
     self.isReady = NO;
     EV_LOG_DEBUG(@"API Query: %@", url);
     self.currentApiRequest = [[EVAPIRequest alloc] initWithURL:url timeout:self.connectionTimeout andDelegate:self];
-    [self.currentApiRequest release];
+    [self.currentApiRequest autorelease];
     [self.currentApiRequest start];
 }
 
@@ -455,7 +572,7 @@
         self.currentSessionID = EV_NEW_SESSION_ID;
     }
     NSString* urlStr = [self getURLStringWithServer:self.textServerHost];
-    urlStr = [urlStr stringByAppendingFormat:@"&input_text=%@", [text stringByReplacingOccurrencesOfString:@" " withString:@"+"]];
+    urlStr = [urlStr stringByAppendingFormat:@"&input_text=%@", [[text stringByReplacingOccurrencesOfString:@" " withString:@"+"] stringByReplacingOccurrencesOfString:@"&" withString:@"%26"]];
     NSURL* url = [NSURL URLWithString:[urlStr stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
     [self apiQuery:url];
 }
@@ -463,7 +580,7 @@
 - (void)editLastQueryWithText:(NSString*)text {
     NSString* urlStr = [self getURLStringWithServer:self.textServerHost];
     if (text != nil) {
-        urlStr = [urlStr stringByAppendingFormat:@"&edit_last_utterance=true&input_text=%@", [text stringByReplacingOccurrencesOfString:@" " withString:@"+"]];
+        urlStr = [urlStr stringByAppendingFormat:@"&edit_last_utterance=true&input_text=%@", [[text stringByReplacingOccurrencesOfString:@" " withString:@"+"] stringByReplacingOccurrencesOfString:@"&" withString:@"%26"]];
     } else {
         urlStr = [urlStr stringByAppendingFormat:@"&edit_last_utterance=true&input_text="];
     }
@@ -472,47 +589,8 @@
     [self apiQuery:url];
 }
 
-
-- (void)setAVSession {
-    EV_LOG_DEBUG(@"Setting session to Play and Record");
-    AVAudioSession *session = [AVAudioSession sharedInstance];
-    NSError *error = nil;
-    
-    [session setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker | AVAudioSessionCategoryOptionAllowBluetooth error:&error];
-    if (error != nil) {
-        EV_LOG_ERROR(@"Failed to setCategory for AVAudioSession! %@", error);
-    }
-    [session setMode:AVAudioSessionModeVoiceChat error:&error];
-    if (error != nil) {
-        EV_LOG_ERROR(@"Failed to setMode for AVAudioSession! %@", error);
-    }
-    [session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
-    if (error != nil) {
-        EV_LOG_ERROR(@"Failed to override output for AVAudioSession! %@", error);
-    }
-}
-
 #pragma mark === Managers Delegates Methods ===
 
-- (void)audioDataStreamerFailed:(EVAudioDataStreamer*)streamer withError:(NSError*)error {
-    [error retain];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [error autorelease];
-        EV_LOG_ERROR(@"Streamer failed with error: %@", error);
-        if ([error code] == EVAudioRecorderCancelledErrorCode) {
-            [[self soundForState:EVApplicationStateSoundCancelled] play];
-            if ([self.delegate respondsToSelector:@selector(evApplicationRecordingIsCancelled:)]) {
-                [self.delegate evApplicationRecordingIsCancelled:self];
-            }
-        } else {
-            [[self soundForState:EVApplicationStateSoundRequestError] play];
-            [self.delegate evApplication:self didObtainError:error];
-        }
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            self.isReady = YES;
-        });
-    });
-}
 
 - (void)audioDataStreamerFinished:(EVAudioDataStreamer *)streamer withResponse:(NSDictionary*)response {
     EV_LOG_DEBUG(@"Response: %@", response);
@@ -530,7 +608,7 @@
         });
     }
     @catch (NSException *exception) {
-        [self audioDataStreamerFailed:streamer withError:[NSError errorWithCode:100 andDescription:[exception reason]]];
+        [self node:streamer gotAnError:[NSError errorWithCode:100 andDescription:[exception reason]]];
     }
 }
 
@@ -539,10 +617,6 @@
     self.currentApiRequest = nil;
 }
 
-- (void)apiRequest:(EVAPIRequest *)request gotAnError:(NSError*)error {
-    [self audioDataStreamerFailed:nil withError:error];
-    self.currentApiRequest = nil;
-}
 
 - (void)locationManager:(EVLocationManager*)manager didObtainNewLongitude:(double)lng andLatitude:(double)lat {
     self.deviceLatitude = lat;
@@ -555,7 +629,14 @@
 }
 
 
-- (void)recorder:(EVAudioRecorder*)recorder peakVolumeLevel:(float)peakLevel andAverageVolumeLevel:(float)averageLevel {
+
+// Provide this for obtaining sound power
+- (void)provideCurrentPeakPower:(float*)peakPower andAveragePower:(float*)averagePower {
+    [self.soundRecorder provideCurrentPeakPower:peakPower andAveragePower:averagePower];
+}
+
+
+- (void)visualizePeakVolumeLevel:(float)peakLevel andAverageVolumeLevel:(float)averageLevel {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (self.sendVolumeLevelUpdates && [self.delegate respondsToSelector:@selector(evApplication:recordingVolumePeak:andAverage:)]) {
             [self.delegate evApplication:self recordingVolumePeak:peakLevel andAverage:averageLevel];
@@ -564,21 +645,10 @@
 }
 
 - (void)recorderStartedRecording:(EVAudioRecorder*)recorder {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[self soundForState:EVApplicationStateSoundRecordingStarted] play];
-        if ([self.delegate respondsToSelector:@selector(evApplicationRecordingIsStarted:)]) {
-            [self.delegate evApplicationRecordingIsStarted:self];
-        }
-    });
+    if ([self.delegate respondsToSelector:@selector(evApplicationRecordingIsStarted:)]) {
+        [self.delegate evApplicationRecordingIsStarted:self];
+    }
 }
 
-- (void)recorderFinishedRecording:(EVAudioRecorder *)recorder {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[self soundForState:EVApplicationStateSoundRecordingStoped] play];
-        if ([self.delegate respondsToSelector:@selector(evApplicationRecordingIsStoped:)]) {
-            [self.delegate evApplicationRecordingIsStoped:self];
-        }
-    });
-}
 
 @end

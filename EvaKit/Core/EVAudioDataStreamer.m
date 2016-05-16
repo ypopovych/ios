@@ -19,8 +19,8 @@
 
 @implementation EVAudioDataStreamer
 
-- (instancetype)initWithOperationChainLength:(NSUInteger)length {
-    self = [super initWithOperationChainLength:length];
+- (instancetype)initWithOperationChainLength:(NSUInteger)length andErrorHandler:(id<EVErrorHandler>)errorHandler{
+    self = [super initWithOperationChainLength:length andName:@"DataStreamer" andErrorHandler:errorHandler];
     if (self != nil) {
         self.responseData = [NSMutableData data];
         self.httpBufferSize = 0;
@@ -30,8 +30,7 @@
 }
 
 -  (void)dealloc {
-    [self.dataProviderDelegate release];
-    self.dataProviderDelegate = nil;
+    self.dataConsumer = nil;
     self.responseData = nil;
     self.webServiceURL = nil;
     [super dealloc];
@@ -42,12 +41,10 @@
     _httpBufferSize = httpBufferSize;
 }
 
-- (void)providerStarted:(id<EVDataProvider>)provider {
+- (void)producerStarted:(EVDataProducer*)producer {
     [self.responseData setLength:0];
-    
-    EV_LOG_DEBUG(@"Starting request to URL: %@", self.webServiceURL);
-   
-    EVStreamURLWriter* streamWriter = [[EVStreamURLWriter alloc] initWithURL:self.webServiceURL
+       
+    EVStreamURLWriter* streamWriter = [[[EVStreamURLWriter alloc] initWithURL:self.webServiceURL
                                                                      headers:@{
                                                                                @"Expect": @"100-continue",
                                                                                @"Transfer-Encoding": @"chunked",
@@ -55,22 +52,17 @@
                                                                                }
                                                                   bufferSize:self.httpBufferSize
                                                            connectionTimeout:self.connectionTimeout
-                                                                    delegate:self];
-    self.dataProviderDelegate = streamWriter;
+                                                                    delegate:self] autorelease];
+    self.dataConsumer = streamWriter;
     if (streamWriter == nil) {
-        [self provider:self gotAnError:[NSError errorWithCode:EVAudioDataStreamerCreateErrorCode andDescription:@"Can't create stream writer"]];
+        [self.errorHandler node:self gotAnError:[NSError errorWithCode:EVAudioDataStreamerCreateErrorCode andDescription:@"Can't create stream writer"]];
     } else {
-        [super providerStarted:provider];
+//        streamWriter.errorHandler = self.errorHandler;
+        [super producerStarted:producer];
     }
 }
 
-- (void)provider:(id<EVDataProvider>)provider gotAnError:(NSError *)error {
-    if (provider != self) {
-        EV_LOG_ERROR(@"Provider %@ got an error: %@", provider, error);
-    }
-    [super provider:provider gotAnError:error];
-    [self.delegate audioDataStreamerFailed:self withError:error];
-}
+
 
 - (NSData*)processData:(NSData*)data error:(NSError**)error {
     return data;
@@ -78,7 +70,7 @@
 
 
 - (void)streamWriter:(EVStreamURLWriter*)writer gotResponseData:(NSData*)data {
-    EV_LOG_DEBUG("StreamWtiter got some response");
+    EV_LOG_DEBUG("%@ got some response", self.name);
     [data retain];
     dispatch_async(self.operationQueue, ^{
         [self.responseData appendData:data];
@@ -86,27 +78,30 @@
     });
 }
 
-- (void)streamWriter:(EVStreamURLWriter *)writer gotAnError:(NSError*)error {
+- (void)node:(EVDataNode *)node gotAnError:(NSError *)error {
     EV_LOG_DEBUG(@"StreamWriter got an error: %@", error);
     [error retain];
     dispatch_async(self.operationQueue, ^{
         [error autorelease];
-        [self provider:self gotAnError:error];
-        [self stopDataProvider];
-        [self.dataProviderDelegate release];
-        self.dataProviderDelegate = nil;
+        self.dataConsumer = nil;
+        [self.errorHandler node:self gotAnError:error];
     });
+}
+
+-(void)cancel {
+    [super cancel];
+    self.dataConsumer = nil;
 }
 
 - (void)streamWriterFinished:(EVStreamURLWriter *)writer {
     dispatch_async(self.operationQueue, ^{
-        [self.dataProviderDelegate release];
-        self.dataProviderDelegate = nil;
+        EV_LOG_DEBUG(@"%@ - stream Writer finished", self.name);
+        self.dataConsumer = nil;
         NSError* error = nil;
         NSDictionary* json = [NSJSONSerialization JSONObjectWithData:self.responseData options:kNilOptions error:&error];
         if (error != nil) {
             EV_LOG_ERROR("Can't read json: %@", error);
-            [self provider:self gotAnError:error];
+            [self.errorHandler node:self gotAnError:error];
         } else {
             [self.delegate audioDataStreamerFinished:self withResponse:json];
         }

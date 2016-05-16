@@ -56,14 +56,21 @@
 
 @end
 
+int streamWriters = 0;
+int streamWritersDealloced = 0;
+
 @implementation EVStreamURLWriter
+
 
 - (instancetype)initWithURL:(NSURL*)anURL
                     headers:(NSDictionary*)headers
                  bufferSize:(NSUInteger)bufferSize
           connectionTimeout:(NSTimeInterval)timeout
                    delegate:(id<EVStreamURLWriterDelegate>)delegate {
-    self = [super init];
+    
+    streamWriters++;
+    NSString *name = [NSString stringWithFormat:@"StreamWriter-%d", streamWriters];
+    self = [super initWithName:name andErrorHandler:delegate];
     if (self != nil) {
         self.delegate = delegate;
         NSMutableURLRequest* request = [NSMutableURLRequest requestWithURL:anURL cachePolicy:NSURLRequestUseProtocolCachePolicy timeoutInterval:timeout];
@@ -86,6 +93,7 @@
             return nil;
         }
         
+        EV_LOG_INFO(@"URLWriter:  prod=%x cons=%x", (unsigned int)prodStream, (unsigned int)consStream);
         _streamOpened = NO;
         self.dataStream = prodStream;
         _connectionError = NO;
@@ -96,51 +104,62 @@
             self.connection = [NSURLConnection connectionWithRequest:request delegate:self];
         });
     }
+    EV_LOG_DEBUG(@"%@ initialized", self.name);
     return self;
 }
 
 
 - (void)dealloc {
+    streamWritersDealloced++;
+    EV_LOG_DEBUG(@"Deallocated StreamWriters %d", streamWritersDealloced);
     self.connection = nil;
     self.dataStream = nil;
     [super dealloc];
 }
 
-- (void)provider:(id<EVDataProvider>)provider hasNewData:(NSData*)data {
+
+- (void)producer:(EVDataProducer*)producer hasNewData:(NSData*)data {
+    EV_LOG_DEBUG(@"%@ Has new data of length %lu from %@", self.name, (unsigned long)[data length], producer.name);
     if (!_streamOpened && !_connectionError) {
         [_dataStream open];
         _streamOpened = YES;
         //Wait for opening
         usleep(200);
+        EV_LOG_DEBUG(@"Stream %x opened", (unsigned int)_dataStream);
     }
-    size_t writed = 0;
+
+    size_t wrote = 0;
     size_t length = [data length];
     const uint8_t* bytes = [data bytes];
-    while (!_connectionError && writed < length) {
+    while (!_connectionError && wrote < length && _streamOpened) {
         //Wait for space in stream
-        while(!_connectionError && !_dataStream.hasSpaceAvailable) usleep(100);
-        //Write so many how we can. Save how many we writed
+        while(!_connectionError && !_dataStream.hasSpaceAvailable) {
+            EV_LOG_INFO(@"no space avail");
+            usleep(100);
+        }
+        //Write so many how we can. Save how many we wrote
         if (!_connectionError) {
-            writed += [_dataStream write:(bytes+writed) maxLength:(length-writed)];
+            wrote += [_dataStream write:(bytes+wrote) maxLength:(length-wrote)];
+            if (wrote < length) {
+                EV_LOG_INFO(@"wrote = %lu  length= %lu", wrote, length);
+            }
         }
     }
 }
 
-- (void)provider:(id<EVDataProvider>)provider gotAnError:(NSError*)error {
+- (void)cancel {
+    [super cancel];
     [self.connection cancel];
     if (_streamOpened) {
-        [_dataStream close];
         _streamOpened = NO;
+        [_dataStream close];
+        EV_LOG_DEBUG(@"Stream %x closed", (unsigned int)_dataStream);
     }
     self.dataStream = nil;
     self.connection = nil;
 }
 
-- (void)providerStarted:(id<EVDataProvider>)provider {
-    // Do nothing.
-}
-
-- (void)providerFinished:(id<EVDataProvider>)provider {
+- (void)producerFinished:(EVDataProducer*)producer {
     if (_streamOpened) {
         _streamOpened = NO;
         [_dataStream close];
@@ -152,7 +171,7 @@
 - (void)connection:(NSURLConnection *)connection didFailWithError:(NSError *)error {
     _connectionError = YES;
     self.connection = nil;
-    [self.delegate streamWriter:self gotAnError:error];
+    [self.errorHandler node:self gotAnError:error];
 }
 
 - (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {

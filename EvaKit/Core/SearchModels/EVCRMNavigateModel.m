@@ -1,5 +1,4 @@
 //
-//  EVCruiseSearchModel.m
 //  EvaKit
 //
 //  Copyright (c) 2015 Evature. All rights reserved.
@@ -10,40 +9,51 @@
 
 @interface EVCRMNavigateModel ()
 
-@property (nonatomic, strong, readwrite) EVCRMAttributes* attributes;
+@property (nonatomic, assign, readwrite) EVCRMPageType page;
+@property (nonatomic, strong, readwrite) NSString* subPage;
+@property (nonatomic, strong, readwrite) NSDictionary* filter;
 
 @end
 
 @implementation EVCRMNavigateModel
 
 - (instancetype)initWithComplete:(BOOL)isComplete
-                crmAttributes:(EVCRMAttributes *)attributes {
+                          inPage:(EVCRMPageType)page
+                         subPage:(NSString*)subPage
+                          filter:(NSDictionary*)filter {
     self = [super initWithComplete:isComplete];
     if (self != nil) {
-        self.attributes = attributes;
+        self.page = page;
+        self.subPage = subPage;
+        self.filter = filter;
     }
     return self;
 }
 
 
 + (instancetype)modelComplete:(BOOL)isComplete
-                 crmAttributes:(EVCRMAttributes *)attributes {
+                       inPage:(EVCRMPageType)page
+                      subPage:(NSString*)subPage
+                       filter:(NSDictionary*)filter {
     return [[[self alloc] initWithComplete:isComplete
-                             crmAttributes:attributes] autorelease];
+                                    inPage:page
+                                   subPage:subPage
+                                    filter:filter] autorelease];
 }
 
 
-- (EVCallbackResponse*)triggerSearchForDelegate:(id<EVSearchDelegate>)delegate {
+- (EVCallbackResult*)triggerSearchForDelegate:(id<EVSearchDelegate>)delegate {
     if ([delegate conformsToProtocol:@protocol(EVCRMNavigateDelegate)]) {
-        return [(id<EVCRMNavigateDelegate>)delegate   navigateTo:(EVCRMPageType)self.attributes.page
-                                               withSubPage:0
-                                               ofTeam:(EVCRMFilterType)self.attributes.filter];
+        return [(id<EVCRMNavigateDelegate>)delegate   navigateTo:(EVCRMPageType)self.page
+                                                     withSubPage:self.subPage
+                                                      withFilter:self.filter];
     }
-    return [EVCallbackResponse responseWithNone];
+    return [EVCallbackResult resultWithNone];
 }
 
 - (void)dealloc {
-    self.attributes = nil;
+    self.filter = nil;
+    self.subPage = nil;
     [super dealloc];
 }
 

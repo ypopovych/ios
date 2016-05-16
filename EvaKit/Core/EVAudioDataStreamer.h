@@ -15,17 +15,19 @@
 
 @interface EVAudioDataStreamer : EVAudioChainOperation
 
+- (instancetype)initWithOperationChainLength:(NSUInteger)length andErrorHandler:(id<EVErrorHandler>)errorHandler;
+
 @property (nonatomic, assign, readwrite) unsigned int sampleRate;
 @property (nonatomic, assign, readwrite) NSUInteger httpBufferSize;
 @property (nonatomic, strong, readwrite) NSURL* webServiceURL;
 @property (nonatomic, assign, readwrite) NSTimeInterval connectionTimeout;
 @property (nonatomic, assign, readwrite) id<EVAudioDataStreamerDelegate> delegate;
 
+
 @end
 
 @protocol EVAudioDataStreamerDelegate <NSObject>
 
-- (void)audioDataStreamerFailed:(EVAudioDataStreamer*)streamer withError:(NSError*)error;
 - (void)audioDataStreamerFinished:(EVAudioDataStreamer *)streamer withResponse:(NSDictionary*)response;
                                  
 @end

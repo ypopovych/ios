@@ -157,7 +157,7 @@ static NSDictionary* typeKeys = nil;
         }
         if ([response objectForKey:@"Name"] != nil) {
             NSString* name = [response objectForKey:@"Name"];
-            NSUInteger ind = [name rangeOfString:@" (GID="].location;
+            NSUInteger ind = [name rangeOfString:@" (GID"].location;
             if (ind != NSNotFound) {
                 self.name = [name substringToIndex:ind];
             } else {
@@ -199,8 +199,8 @@ static NSDictionary* typeKeys = nil;
 }
 
 - (NSString*)airportCode {
-    if (self.airportCode != nil) {
-        return self.airportCode;
+    if (self.allAirportCode != nil) {
+        return self.allAirportCode;
     }
     if ([self.airports count] > 0) {
         return [self.airports objectAtIndex:0];

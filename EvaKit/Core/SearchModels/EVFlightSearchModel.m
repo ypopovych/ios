@@ -92,43 +92,27 @@
     return [[[self alloc] initWithComplete:isComplete origin:origin destination:destination departDateMin:departDateMin departDateMax:departDateMax returnDateMin:returnDateMin returnDateMax:returnDateMax travelers:travelers nonstop:nonstop redeye:redeye oneWay:oneWay airlines:airlines food:food seatType:seatType seatClasses:seatClasses sortBy:sortBy sortOrder:sortOrder] autorelease];
 }
 
-- (EVCallbackResponse*)triggerSearchForDelegate:(id<EVSearchDelegate>)delegate {
+- (EVCallbackResult*)triggerSearchForDelegate:(id<EVSearchDelegate>)delegate {
     if ([delegate conformsToProtocol:@protocol(EVFlightSearchDelegate)]) {
-        if (self.oneWay) {
-            return [(id<EVFlightSearchDelegate>)delegate handleOneWayFlightSearchWhichComplete:self.isComplete
-                                                                           fromLocation:self.origin
-                                                                             toLocation:self.destination
-                                                                          minDepartDate:self.departDateMin
-                                                                          maxDepartDate:self.departDateMax
-                                                                              travelers:self.travelers
-                                                                                nonStop:self.nonstop
-                                                                            seatClasses:self.seatClasses
-                                                                               airlines:self.airlines
-                                                                                 redEye:self.redeye
-                                                                               foodType:self.food
-                                                                               seatType:self.seatType
-                                                                                 sortBy:self.sortBy
-                                                                              sortOrder:self.sortOrder];
-        } else {
-            return [(id<EVFlightSearchDelegate>)delegate handleRoundTripFlightSearchWhichComplete:self.isComplete
-                                                                           fromLocation:self.origin
-                                                                             toLocation:self.destination
-                                                                          minDepartDate:self.departDateMin
-                                                                          maxDepartDate:self.departDateMax
-                                                                             minReturnDate:self.returnDateMin
-                                                                             maxReturnDate:self.returnDateMax
-                                                                              travelers:self.travelers
-                                                                                nonStop:self.nonstop
-                                                                            seatClasses:self.seatClasses
-                                                                               airlines:self.airlines
-                                                                                 redEye:self.redeye
-                                                                               foodType:self.food
-                                                                               seatType:self.seatType
-                                                                                 sortBy:self.sortBy
-                                                                              sortOrder:self.sortOrder];
-        }
+        return [(id<EVFlightSearchDelegate>)delegate handleFlightSearch:self.isComplete
+                                                                       fromLocation:self.origin
+                                                                         toLocation:self.destination
+                                                                      minDepartDate:self.departDateMin
+                                                                      maxDepartDate:self.departDateMax
+                                                                         minReturnDate:self.returnDateMin
+                                                                         maxReturnDate:self.returnDateMax
+                                                                          travelers:self.travelers
+                                                                            nonStop:self.nonstop
+                                                                        seatClasses:self.seatClasses
+                                                                           airlines:self.airlines
+                                                                             redEye:self.redeye
+                                                                           foodType:self.food
+                                                                           seatType:self.seatType
+                                                                             sortBy:self.sortBy
+                                                                          sortOrder:self.sortOrder];
+    
     }
-    return [EVCallbackResponse responseWithNone];
+    return [EVCallbackResult resultWithNone];
 }
 
 - (void)dealloc {

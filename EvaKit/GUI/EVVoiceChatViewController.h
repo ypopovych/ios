@@ -7,12 +7,13 @@
 //
 
 #import <UIKit/UIKit.h>
+#import <AVFoundation/AVFoundation.h>
 #import "EVChatToolbarView.h"
 #import "EVVoiceChatButton.h"
 #import "EVApplicationDelegate.h"
 #import "EVSearchDelegate.h"
 
-@interface EVVoiceChatViewController : JSQMessagesViewController <EVChatToolbarViewDelegate, EVApplicationDelegate>
+@interface EVVoiceChatViewController : JSQMessagesViewController <EVChatToolbarViewDelegate, EVApplicationDelegate, AVSpeechSynthesizerDelegate>
 
 @property (assign, nonatomic) IBOutlet NSLayoutConstraint *toolbarHeightConstraint;
 @property (assign, nonatomic) IBOutlet NSLayoutConstraint *toolbarBottomLayoutGuide;
@@ -22,6 +23,7 @@
 
 // This options can be set from Button or Settings Dictionary
 @property (assign, nonatomic) BOOL startRecordingOnShow;
+@property (assign, nonatomic) BOOL startRecordingOnQuestion;
 @property (assign, nonatomic) BOOL speakEnabled;
 @property (assign, nonatomic) BOOL semanticHighlightingEnabled;
 @property (assign, nonatomic) BOOL semanticHighlightTimes;
